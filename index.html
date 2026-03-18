@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Auditoría de Inventario</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; margin: 0; padding: 15px; }
+        .card { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        h2 { color: #2c3e50; margin-top: 0; font-size: 1.2rem; }
+        
+        /* Estilos del Escáner */
+        #reader { width: 100%; border-radius: 8px; overflow: hidden; background: #222; margin-bottom: 10px; }
+        #status { text-align: center; font-weight: bold; padding: 10px; border-radius: 5px; margin-bottom: 10px; }
+        .status-esperando { background: #fff3cd; color: #856404; }
+        .status-listo { background: #d4edda; color: #155724; }
+
+        /* Estilos de la Tabla */
+        .tabla-container { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+        th { background: #2c3e50; color: white; padding: 10px; text-align: left; }
+        td { padding: 10px; border-bottom: 1px solid #eee; text-align: center; }
+        
+        /* Colores de Alerta */
+        .fila-roja { background-color: #f8d7da; color: #721c24; }
+        .fila-amarilla { background-color: #fff3cd; color: #856404; }
+        .fila-verde { background-color: #d4edda; color: #155724; }
+
+        /* Botón de Descarga */
+        .btn-descarga { 
+            display: block; width: 100%; padding: 15px; background: #007bff; color: white; 
+            text-align: center; text-decoration: none; border-radius: 8px; font-weight: bold; margin-top: 15px; border: none; cursor: pointer;
+        }
+        .btn-descarga:hover { background: #0056b3; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>1. Cargar Base de Datos (.csv)</h2>
+    <input type="file" id="archivoCsv" accept=".csv" style="width: 100%;">
+</div>
+
+<div class="card">
+    <h2>2. Escanear Producto</h2>
+    <div id="reader"></div>
+    <div id="status" class="status-esperando">Esperando carga de archivo...</div>
+</div>
+
+<div class="card">
+    <h2>3. Resultados del Inventario</h2>
+    <div class="tabla-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Código</th>
+                    <th>Producto</th>
+                    <th>Stock</th>
+                    <th>Físico</th>
+                    <th>Dif.</th>
+                </tr>
+            </thead>
+            <tbody id="cuerpoTabla">
+                <tr><td colspan="5">No hay datos cargados</td></tr>
+            </tbody>
+        </table>
+    </div>
+    
+    <button id="descargarCsv" class="btn-descarga" style="display:none;">📥 Descargar Reporte Final (CSV/Excel)</button>
+</div>
+
+<script>
+    let productos = [];
+    const html5QrCode = new Html5Qrcode("reader");
+    const statusDiv = document.getElementById('status');
+    const btnDescargar = document.getElementById('descargarCsv');
+
+    // 1. LECTURA DEL ARCHIVO CSV
+    document.getElementById('archivoCsv').addEventListener('change', function(e) {
+        const archivo = e.target.files[0];
+        Papa.parse(archivo, {
+            header: true,
+            skipEmptyLines: true,
+            complete: function(results) {
+                // Preparamos los datos
+                productos = results.data.map(p => ({
+                    id: Object.values(p)[0], // Asume que la 1ra columna es el Código
+                    nombre: p.Nombre || p.Producto || 'Sin Nombre',
+                    stock: parseInt(p.Stock || p.Cantidad || 0),
+                    fisico: 0
+                }));
+                
+                statusDiv.innerText = "✅ Base cargada. Iniciando cámara...";
+                statusDiv.className = "status-listo";
+                btnDescargar.style.display = "block"; // Mostrar botón de descarga
+                
+                iniciarCamara();
+                actualizarTabla();
+            }
+        });
+    });
+
+    // 2. LÓGICA DE LA CÁMARA
+    function iniciarCamara() {
+        const config = { fps: 15, qrbox: { width: 250, height: 180 } };
+        html5QrCode.start({ facingMode: "environment" }, config, (decodedText) => {
+            if (navigator.vibrate) navigator.vibrate(100); // Vibración al leer
+            procesarEscaneo(decodedText);
+        }).catch(err => {
+            statusDiv.innerText = "❌ Error de cámara. Revisa permisos.";
+        });
+    }
+
+    // 3. PROCESAR ESCANEO
+    function procesarEscaneo(codigo) {
+        const p = productos.find(item => item.id == codigo);
+        if (p) {
+            p.fisico += 1;
+            actualizarTabla();
+        } else {
+            console.log("Código no encontrado: " + codigo);
+        }
+    }
+
+    // 4. ACTUALIZAR TABLA EN PANTALLA
+    function actualizarTabla() {
+        const cuerpo = document.getElementById('cuerpoTabla');
+        cuerpo.innerHTML = "";
+
+        productos.forEach(p => {
+            const diferencia = p.fisico - p.stock;
+            let clase = "fila-verde";
+            if (diferencia < 0) clase = "fila-roja";
+            if (diferencia > 0) clase = "fila-amarilla";
+
+            const fila = `
+                <tr class="${clase}">
+                    <td>${p.id}</td>
+                    <td>${p.nombre}</td>
+                    <td>${p.stock}</td>
+                    <td>${p.fisico}</td>
+                    <td>${diferencia}</td>
+                </tr>
+            `;
+            cuerpo.innerHTML += fila;
+        });
+    }
+
+    // 5. NUEVA FUNCIÓN: DESCARGAR CSV (EXCEL)
+    btnDescargar.addEventListener('click', function() {
+        const reporte = productos.map(p => ({
+            Codigo: p.id,
+            Producto: p.nombre,
+            Stock_Sistema: p.stock,
+            Conteo_Fisico: p.fisico,
+            Diferencia: p.fisico - p.stock
+        }));
+
+        const csvString = Papa.unparse(reporte);
+        const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a");
+        const url = URL.createObjectURL(blob);
+        
+        link.setAttribute("href", url);
+        link.setAttribute("download", "reporte_inventario.csv");
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    });
+</script>
+
+</body>
+</html>
